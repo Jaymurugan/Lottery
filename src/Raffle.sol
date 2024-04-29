@@ -2,6 +2,8 @@
 
 pragma solidity ^0.8.18;
 
+import {VRFCoordinatorV2Interfaces} from "@chainlink/contracts/src/v0.8/vrf/interfaces/VRFCoordinatorV2Interface.sol"; // We are importing this to integrate chainlink VRF.
+
 /**
  *@title Raffle Smart Contract.
  *@author Jay Murugan
@@ -11,9 +13,21 @@ pragma solidity ^0.8.18;
 contract Raffle {
     error Raffle__notEnoughEthSent(); // Custom error to reduce gas.
 
+    uint16 private constant REQUEST_CONFIRMATION = 3;
+
+    uint32 private constant NUM_WORDS = 1;
+
     uint256 private immutable i_entranceFee; // Let's make this immutable to save gas. We want this entrance fee to change depending on the contract. So we will create a constructor for it.
 
     uint256 private immutable i_interval; // We are creating a variable to hold a time which determines when the raffle gets called. We can change it in the constructor. It'll be in seconds.
+
+    VRFCoordinatorV2Interfaces private immutable i_vrfCoordinator; // Variable to hold the coordinator address.
+
+    bytes32 private immutable i_gasLane; // key hash is also going to be dependent on the chain. Hence we add it as immutable and to the constructor.
+
+    uint64 private immutable i_subscriptionId;
+
+    uint32 private immutable i_callbackGasLimit;
 
     uint256 private s_lastTimeStamp; // To keep track of what time the last winner was picked.
 
@@ -22,10 +36,21 @@ contract Raffle {
 
     event EnteredRaffle(address indexed players); // We are creating an event. Whenever we call the enterRaffle fn, we are going to emit it.
 
-    constructor(uint256 entranceFee, uint256 interval) {
+    constructor(
+        uint256 entranceFee,
+        uint256 interval,
+        address vrfCoordinator,
+        bytes32 gasLane,
+        uint64 subscriptionId,
+        uint32 callbackGasLimit
+    ) {
         // This takes a new entrance fee and assign it to the immutable i_entranceFee.
         i_entranceFee = entranceFee;
         i_interval = interval;
+        i_gasLane = gasLane;
+        i_vrfCoordinator = VRFCoordinatorV2Interfaces(vrfCoordinator);
+        i_subscriptionId = subscriptionId;
+        i_callbackGasLimit = callbackGasLimit;
         s_lastTimeStamp = block.timestamp; // Our first time stamp should be set in the constructor.
     }
 
@@ -48,6 +73,15 @@ contract Raffle {
             // black.timestamp is a global variable that gives us the current time. Here if enough time has not passed, we revert.
             revert();
         }
+        // If we got past this if statement, then we can pick a winner. We will use chainlink VRF for it.
+        // Getting a random number will be a 2 transaction fn: 1. Request the RNG. 2. Get the random number.
+        uint256 requestId = i_vrfCoordinator.requestRandomWords( // look at the chainlink vrf subscription method get random documentation.
+                i_gasLane,
+                i_subscriptionId,
+                REQUEST_CONFIRMATION, // How many confirmations do we want. Can we chain dependent but I'm gonna keep it as 3.
+                i_callbackGasLimit, // Max gas the our callback function will do.
+                NUM_WORDS // Number of random numbers that we want. We only want 1.
+            );
     }
 
     function getEntranceFee() external view returns (uint256) {
